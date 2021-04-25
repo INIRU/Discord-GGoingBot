@@ -31,6 +31,32 @@ class attendance_check(commands.Cog):
                     break
         return rank
 
+    def check_i(self, user, message):
+        data = self.load_data(user.id)
+        lastday = (datetime.datetime.strptime(
+            str(data[3]), '%Y%m%d')).strftime("%Y년 %m월 %d일")
+        with open('./database/User_Data/attendance_check.json', 'r') as f:
+            role_data = json.load(f)
+        for role in role_data["reward"]:
+            r_rs = int((list(role.keys()))[0])
+            if r_rs > (data[2]):
+                role_name = str(discord.utils.get(
+                    message.guild.roles, id=role[str(r_rs)]))
+                break
+        emb = discord.Embed(title=f"{user}님의 출석체크 정보",
+                            timestamp=datetime.datetime.utcnow())
+        emb.description = (
+            "```cs\n"
+            f"[시즌 순위] - {int(self.rank_check(user.id))}위\n"
+            f"[전체 출석체크 횟수] - {data[2]}회\n"
+            f"[시즌 출석체크 횟수] - {data[1]}회\n"
+            f"[출석체크 1등 횟수] - {data[4]}회\n"
+            f"[마지막 출첵일] - {lastday}\n"
+            "\n```\n"
+            f"> 다음 등급 {role_name} 까지 `{r_rs - data[2]}`회 남았습니다."
+        )
+        return emb
+
     @commands.Cog.listener()
     async def on_ready(self):
         self.attendance_check_top.start()
@@ -71,7 +97,7 @@ class attendance_check(commands.Cog):
             with open('./database/User_Data/attendance_check.json', 'w') as f:
                 json.dump(data, f, indent=4)
 
-    @tasks.loop(seconds=1)
+    @tasks.loop(seconds=60)
     async def attendance_check_top(self):
         top_dic = {}
         with open('./database/User_Data/attendance_check.json', 'r') as f:
@@ -82,13 +108,9 @@ class attendance_check(commands.Cog):
         c.execute("SELECT * FROM attendancecheck")
         v = c.fetchall()
         v.sort(key=lambda x: -x[1])
-        msg = await self.bot.get_channel(826025817569099786).fetch_message(826026211288416337)
+        msg = await self.bot.get_channel(826025817569099786).fetch_message(832202434176483328)
         emb = discord.Embed(
             title=f"**{data['season']['season_name']} 시즌**", timestamp=datetime.datetime.utcnow())
-        for x in v:
-            if self.bot.get_user(x[0]) is None:
-                c.execute(
-                    "DELETE FROM attendancecheck WHERE id = ?", (int(x[0])))
         v_check = v[1][1]
         i = 1
         for u in v:
@@ -100,6 +122,9 @@ class attendance_check(commands.Cog):
                     top_dic[str(i)] = []
                 top_dic[str(i)].append(u)
         self.top_dic = top_dic
+        with open('./database/User_Data/rank_data.json', 'w') as f:
+            json.dump(self.top_dic, f, indent=4)
+        await self.bot.get_channel(832821592559976458).send("출석체크 순위가 갱신되었습니다.", file=discord.File("./database/User_Data/rank_data.json"))
         for x in range(i):
             if (x + 1) == 11:
                 break
@@ -123,6 +148,7 @@ class attendance_check(commands.Cog):
                               value=f"> **시즌 출첵횟수**: **`{top_dic[str(x+1)][0][1]}`**회\n> **전체 출첵횟수**: **`{top_dic[str(x+1)][0][2]}`**회")
             if (x + 1) % 2 == 1:
                 emb.add_field(name="\u200b", value="\u200b", inline=True)
+        emb.set_footer(text="갱신 주기: 60s")
         await msg.edit(embed=emb, content=f"🎊 {top1_message} 1등 축하드립니다. 🎊")
 
     def load_data(self, user_id):
@@ -164,22 +190,7 @@ class attendance_check(commands.Cog):
                 u_lastday = u_data[3]
                 u_top1 = u_data[4]
                 if u_lastday == lastday:
-                    rank = int(self.rank_check(message.author.id))
-                    for role in data["reward"]:
-                        r_rs = int((list(role.keys()))[0])
-                        if r_rs > (u_ad_check):
-                            role_name = str(discord.utils.get(
-                                message.guild.roles, id=role[str(r_rs)]))
-                            break
-                    emb = discord.Embed(timestamp=datetime.datetime.utcnow())
-                    emb.add_field(name="> **전체 출첵횟수**",
-                                  value=f"**`{u_ad_check}`**회")
-                    emb.add_field(name="> **시즌 출첵횟수**",
-                                  value=f"**`{u_season_check}`**회")
-                    emb.add_field(
-                        name="> 다음 등급", value=f"{role_name} 까지 `{r_rs - u_ad_check}`회 남았습니다.", inline=False)
-                    emb.description = f"**시즌 순위**: **`{rank}`등**"
-                    return await message.author.send(embed=emb, content=message.author.mention)
+                    return await message.author.send(embed=self.check_i(message.author, message), content=message.author.mention)
             if lastday != data["day"]:
                 await message.guild.get_member(data["top"]).remove_roles(rtop)
                 await message.author.add_roles(rtop)
@@ -213,15 +224,27 @@ class attendance_check(commands.Cog):
             emb.set_footer(text=f"오늘의 멘트: {message.content}")
             await message.channel.send(embed=emb, content=message.author.mention)
 
-    @ commands.command(name="출첵복구")
-    @ commands.is_owner()
-    async def _is_onw(self, message, u_id: discord.Member, ad_check: int):
-        conn = sqlite3.connect(
-            "database/User_Data/check.db", isolation_level=None)
-        c = conn.cursor()
-        c.execute("UPDATE attendancecheck SET ad_check = ?, lastday = ? WHERE id = ?",
-                  (ad_check, 0, message.author.id))
-        await message.send("완료")
+    @commands.command(name="checkinfo", aliases=["checki"])
+    @commands.has_permissions(administrator=True)
+    async def _checki(self, message, user: discord.Member):
+        await message.send(embed=self.check_i(user, message))
+
+    @commands.command(name="checkwarn", aliases=["checkw"])
+    @commands.has_permissions(administrator=True)
+    async def _checkw(self, message, message_id: int, *, warn_message: str = "도배로 검거된 메세지 입니다."):
+        msg = await self.bot.get_channel(785850711316496426).fetch_message(message_id)
+        msg_emb_data = msg.embeds[0]
+        msg_content_data = msg.mentions[0]
+        emb = discord.Embed(color=msg_emb_data.color)
+        emb.set_author(name=msg_emb_data.author.name,
+                       icon_url=msg_emb_data.author.icon_url)
+        for f in msg_emb_data.fields:
+            emb.add_field(name=f.name, value=f.value, inline=f.inline)
+        emb.set_footer(text=msg_emb_data.footer.text)
+        await msg_content_data.send(embed=emb, content=f"{msg_content_data.mention} 최근 출첵을 하신 메세지가 도배로 검거되었습니다.\n> 사유: {warn_message}")
+        emb.set_footer(text=f"오늘의 멘트: {warn_message}")
+        await msg.edit(embed=emb, content=msg_content_data.mention)
+        await message.reply(f"> `{msg_emb_data.footer.text.replace('오늘의 멘트: ', '')}`\n를 도배로 검거하였습니다.")
 
 
 def setup(bot):
